@@ -31,10 +31,15 @@ class AudioEngine {
   constructor() {
     this.ctx = null;
     this.master = null;
-    this.waveform = "triangle";
+    this.waveform = "piano";
     this.masterGain = 0.55;
     this.releaseMs = 180;
     this.active = new Map();
+    this.dry = null;
+    this.wet = null;
+    this.convolver = null;
+    this.compressor = null;
+    this.noiseBuffer = null;
   }
 
   ensure() {
@@ -43,7 +48,28 @@ class AudioEngine {
     this.ctx = new AudioContextCtor();
     this.master = this.ctx.createGain();
     this.master.gain.value = this.masterGain;
+    this.compressor = this.ctx.createDynamicsCompressor();
+    this.compressor.threshold.value = -18;
+    this.compressor.knee.value = 18;
+    this.compressor.ratio.value = 3;
+    this.compressor.attack.value = 0.004;
+    this.compressor.release.value = 0.12;
+
+    this.dry = this.ctx.createGain();
+    this.wet = this.ctx.createGain();
+    this.dry.gain.value = 0.92;
+    this.wet.gain.value = 0.26;
+
+    this.convolver = this.ctx.createConvolver();
+    this.convolver.buffer = this._makeImpulseResponse(1.4, 2.2);
+
+    this.dry.connect(this.compressor);
+    this.wet.connect(this.convolver);
+    this.convolver.connect(this.compressor);
+    this.compressor.connect(this.master);
     this.master.connect(this.ctx.destination);
+
+    this.noiseBuffer = this._makeNoiseBuffer(0.06);
   }
 
   async resume() {
@@ -69,6 +95,10 @@ class AudioEngine {
   play(midi, velocity01 = 0.9) {
     this.ensure();
     if (this.active.has(midi)) return;
+    if (this.waveform === "piano") {
+      this._playPiano(midi, velocity01);
+      return;
+    }
     const now = this.ctx.currentTime;
 
     const gainNode = this.ctx.createGain();
@@ -86,15 +116,19 @@ class AudioEngine {
     const osc2Gain = this.ctx.createGain();
     osc2Gain.gain.value = 0.08;
 
+    const out = this._makeStereoPan(midi);
+    gainNode.connect(out);
+    out.connect(this.dry);
+    out.connect(this.wet);
+
     osc1.connect(gainNode);
     osc2.connect(osc2Gain);
     osc2Gain.connect(gainNode);
-    gainNode.connect(this.master);
 
     osc1.start();
     osc2.start();
 
-    this.active.set(midi, { osc1, osc2, gainNode });
+    this.active.set(midi, { kind: "basic", osc1, osc2, gainNode, out });
   }
 
   stop(midi) {
@@ -103,6 +137,19 @@ class AudioEngine {
     if (!node) return;
     const now = this.ctx.currentTime;
     const releaseSec = this.releaseMs / 1000;
+
+    if (node.kind === "piano") {
+      node.amp.gain.cancelScheduledValues(now);
+      node.amp.gain.setValueAtTime(Math.max(node.amp.gain.value, 0.0001), now);
+      node.amp.gain.exponentialRampToValueAtTime(0.0001, now + releaseSec);
+
+      const stopAt = now + releaseSec + 0.03;
+      for (const o of node.oscs) o.stop(stopAt);
+      if (node.noise) node.noise.stop(now + 0.08);
+
+      this.active.delete(midi);
+      return;
+    }
 
     node.gainNode.gain.cancelScheduledValues(now);
     node.gainNode.gain.setValueAtTime(Math.max(node.gainNode.gain.value, 0.0001), now);
@@ -113,6 +160,117 @@ class AudioEngine {
     node.osc2.stop(stopAt);
 
     this.active.delete(midi);
+  }
+
+  _makeNoiseBuffer(seconds) {
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * seconds));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < len; i += 1) {
+      ch[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    }
+    return buf;
+  }
+
+  _makeImpulseResponse(seconds, decay) {
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * seconds));
+    const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate);
+    for (let c = 0; c < 2; c += 1) {
+      const ch = buf.getChannelData(c);
+      for (let i = 0; i < len; i += 1) {
+        const t = i / len;
+        const env = Math.pow(1 - t, decay);
+        ch[i] = (Math.random() * 2 - 1) * env * 0.7;
+      }
+    }
+    return buf;
+  }
+
+  _makeStereoPan(midi) {
+    const p = (midi - 60) / 48;
+    const pan = clamp(p, -1, 1);
+    if (typeof this.ctx.createStereoPanner === "function") {
+      const sp = this.ctx.createStereoPanner();
+      sp.pan.value = pan;
+      return sp;
+    }
+    const g = this.ctx.createGain();
+    g.gain.value = 1;
+    return g;
+  }
+
+  _playPiano(midi, velocity01) {
+    const now = this.ctx.currentTime;
+    const freq = midiToFreq(midi);
+    const vel = clamp(velocity01, 0.05, 1);
+
+    const out = this._makeStereoPan(midi);
+
+    const amp = this.ctx.createGain();
+    amp.gain.setValueAtTime(0.0001, now);
+    amp.gain.exponentialRampToValueAtTime(0.0001 + vel * 0.72, now + 0.012);
+
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.Q.value = 0.6;
+    const baseCut = 900 + vel * 5200 + clamp((midi - 36) / 72, 0, 1) * 1600;
+    lp.frequency.setValueAtTime(baseCut, now);
+    lp.frequency.exponentialRampToValueAtTime(Math.max(700, baseCut * 0.55), now + 0.35);
+
+    amp.connect(lp);
+    lp.connect(out);
+    out.connect(this.dry);
+    out.connect(this.wet);
+
+    const oscs = [];
+    const partials = [
+      { mul: 1, gain: 0.82, detune: Math.random() * 10 - 5 },
+      { mul: 2, gain: 0.26, detune: (Math.random() * 10 - 5) * 1.2 },
+      { mul: 3, gain: 0.18, detune: (Math.random() * 10 - 5) * 1.6 },
+      { mul: 4, gain: 0.10, detune: (Math.random() * 10 - 5) * 2.0 },
+      { mul: 5, gain: 0.06, detune: (Math.random() * 10 - 5) * 2.4 },
+      { mul: 6, gain: 0.04, detune: (Math.random() * 10 - 5) * 2.8 },
+    ];
+
+    for (const p of partials) {
+      const o = this.ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = freq * p.mul * (1 + p.mul * 0.00018);
+      o.detune.value = p.detune;
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      const peak = Math.max(0.0001, vel * p.gain);
+      g.gain.exponentialRampToValueAtTime(peak, now + 0.008);
+      const decay = 0.08 + (1 - vel) * 0.10 + (p.mul - 1) * 0.045;
+      g.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+
+      o.connect(g);
+      g.connect(amp);
+      o.start(now);
+      oscs.push(o);
+    }
+
+    let noise = null;
+    if (this.noiseBuffer) {
+      noise = this.ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer;
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, now);
+      ng.gain.exponentialRampToValueAtTime(0.0001 + vel * 0.12, now + 0.002);
+      ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+      const hp = this.ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 900;
+
+      noise.connect(ng);
+      ng.connect(hp);
+      hp.connect(amp);
+      noise.start(now);
+    }
+
+    this.active.set(midi, { kind: "piano", oscs, amp, out, noise });
   }
 
   click(velocity01 = 0.9) {
@@ -926,6 +1084,7 @@ class PianoUI {
     this.onAnyNote = onAnyNote;
     this.keyEls = new Map();
     this.pressedByPointer = new Map();
+    this.whiteWidth = 24;
   }
 
   build() {
@@ -938,7 +1097,10 @@ class PianoUI {
       return count;
     })();
 
-    const whiteWidth = Math.floor((this.rootEl.clientWidth || 900) / totalWhites);
+    const target = Math.min(28, Math.max(18, Math.floor((window.innerWidth || 1200) / 52)));
+    const whiteWidth = target;
+    this.whiteWidth = whiteWidth;
+    this.rootEl.style.width = `${totalWhites * whiteWidth}px`;
     const baseLeft = 0;
 
     for (let m = this.midiStart; m <= this.midiEnd; m += 1) {
@@ -1009,6 +1171,7 @@ class PianoUI {
 
 const dom = {
   btnResumeAudio: document.getElementById("btnResumeAudio"),
+  pianoScroll: document.getElementById("pianoScroll"),
   piano: document.getElementById("piano"),
   octaveInfo: document.getElementById("octaveInfo"),
 
@@ -1107,19 +1270,24 @@ function midiRangeForBaseOctave(octave) {
 let midiRange = midiRangeForBaseOctave(baseOctave);
 
 const pianoUi = new PianoUI(dom.piano, {
-  midiStart: midiRange.start,
-  midiEnd: midiRange.end,
+  midiStart: 21,
+  midiEnd: 108,
   onNoteOn: (midi, vel) => audio.play(midi, vel),
   onNoteOff: (midi) => audio.stop(midi),
   onAnyNote: (midi) => onPlayedAny(midi),
 });
 
-function rebuildPiano() {
+function scrollPianoToMidi(midi) {
+  const keyEl = pianoUi.keyEls.get(midi);
+  if (!keyEl || !dom.pianoScroll) return;
+  const targetX = keyEl.offsetLeft - Math.round(dom.pianoScroll.clientWidth / 2) + Math.round(keyEl.clientWidth / 2);
+  dom.pianoScroll.scrollLeft = clamp(targetX, 0, Math.max(0, dom.pianoScroll.scrollWidth - dom.pianoScroll.clientWidth));
+}
+
+function rebuildKeyboardMapping() {
   midiRange = midiRangeForBaseOctave(baseOctave);
-  pianoUi.midiStart = midiRange.start;
-  pianoUi.midiEnd = midiRange.end;
   dom.octaveInfo.textContent = `Octave: ${baseOctave} (C${baseOctave}–B${baseOctave + 1})`;
-  pianoUi.build();
+  scrollPianoToMidi((baseOctave + 1) * 12);
 }
 
 function setCurrentNote(midi, source) {
@@ -1203,7 +1371,7 @@ function handleKeyDown(ev) {
   if (ev.shiftKey && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) {
     ev.preventDefault();
     baseOctave = clamp(baseOctave + (ev.key === "ArrowUp" ? 1 : -1), 2, 6);
-    rebuildPiano();
+    rebuildKeyboardMapping();
     return;
   }
 
@@ -1671,13 +1839,20 @@ function init() {
   setMasterGainUI();
   setReleaseUI();
   setTempoUI();
-  rebuildPiano();
+  pianoUi.build();
+  rebuildKeyboardMapping();
+  scrollPianoToMidi(60);
   staffPractice.render();
   staffTrainer.render();
   staffPlayer.render();
   trainer.newQuestion();
   window.addEventListener("keydown", handleKeyDown, { passive: false });
   window.addEventListener("keyup", handleKeyUp, { passive: false });
+  window.addEventListener("resize", () => {
+    const prev = dom.pianoScroll?.scrollLeft ?? 0;
+    pianoUi.build();
+    if (dom.pianoScroll) dom.pianoScroll.scrollLeft = prev;
+  });
   initMIDI();
 }
 

@@ -172,8 +172,9 @@
                 <div class="card__title">声音</div>
                 <div class="card__content">
                   <div class="formRow">
-                    <label class="label" for="waveform">波形</label>
+                    <label class="label" for="waveform">音色</label>
                     <select id="waveform">
+                      <option value="piano" selected>piano</option>
                       <option value="triangle">triangle</option>
                       <option value="sine">sine</option>
                       <option value="sawtooth">sawtooth</option>
@@ -206,16 +207,6 @@
           </div>
         </div>
       </section>
-
-      <section class="panel">
-        <div class="panel__header">
-          <div class="panel__title">钢琴键盘</div>
-          <div class="panel__subtitle mono" id="octaveInfo">Octave: 4</div>
-        </div>
-        <div class="panel__body">
-          <div id="piano" class="piano" aria-label="Piano"></div>
-        </div>
-      </section>
     </main>
 
     <footer class="footer">
@@ -223,6 +214,18 @@
         Web Audio + Canvas，支持鼠标/触摸/键盘，部分浏览器可用 Web MIDI。
       </div>
     </footer>
+
+    <section class="pianoDock" aria-label="Piano dock">
+      <div class="pianoDock__header">
+        <div class="pianoDock__title">钢琴键盘</div>
+        <div class="pianoDock__subtitle mono" id="octaveInfo">Octave: 4</div>
+      </div>
+      <div class="pianoDock__body">
+        <div id="pianoScroll" class="pianoScroll" aria-label="Piano scroll">
+          <div id="piano" class="piano" aria-label="Piano"></div>
+        </div>
+      </div>
+    </section>
 
     <script src="./app.js" type="module"></script>
   </body>

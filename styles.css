@@ -9,6 +9,7 @@ body {
 
 body {
   margin: 0;
+  padding-bottom: 300px;
   font-family:
     ui-sans-serif,
     system-ui,
@@ -499,4 +500,45 @@ body {
 .footer {
   padding: 14px 16px 20px;
   opacity: 0.75;
+}
+
+.pianoDock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  border-top: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(12px);
+}
+
+.pianoDock__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.pianoDock__title {
+  font-weight: 800;
+}
+
+.pianoDock__subtitle {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.pianoDock__body {
+  padding: 10px 14px 14px;
+}
+
+.pianoScroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
 }
