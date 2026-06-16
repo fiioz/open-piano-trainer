@@ -1,0 +1,14 @@
+.DS_Store
+.idea/
+.vscode/
+
+.pai/
+.trae/
+
+trae_py_scripts/
+
+node_modules/
+dist/
+build/
+
+*.log
