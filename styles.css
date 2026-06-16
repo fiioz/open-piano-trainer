@@ -63,15 +63,9 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(380px, 1fr) minmax(380px, 1fr);
+  grid-template-columns: 1fr;
   gap: 16px;
   padding: 16px;
-}
-
-@media (max-width: 980px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 .panel {
@@ -538,13 +532,16 @@ body {
 }
 
 .pianoDock__body {
-  padding: 10px 14px 14px;
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 .pianoScroll {
   overflow-x: auto;
   overflow-y: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.75);
 }

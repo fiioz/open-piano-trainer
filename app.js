@@ -1257,10 +1257,10 @@ class PianoUI {
       return count;
     })();
 
-    const target = Math.min(28, Math.max(18, Math.floor((window.innerWidth || 1200) / 52)));
-    const whiteWidth = target;
+    const containerWidth = this.rootEl.parentElement?.clientWidth || window.innerWidth || 1200;
+    const whiteWidth = Math.max(18, containerWidth / totalWhites);
     this.whiteWidth = whiteWidth;
-    this.rootEl.style.width = `${totalWhites * whiteWidth}px`;
+    this.rootEl.style.width = `${Math.max(containerWidth, totalWhites * whiteWidth)}px`;
     const baseLeft = 0;
 
     for (let m = this.midiStart; m <= this.midiEnd; m += 1) {
@@ -1276,9 +1276,9 @@ class PianoUI {
 
       const whiteIndex = getWhiteIndexInRange(this.midiStart, m);
       if (black) {
-        const left = baseLeft + (whiteIndex - 1) * whiteWidth + Math.floor(whiteWidth * 0.67);
+        const left = baseLeft + (whiteIndex - 1) * whiteWidth + whiteWidth * 0.67;
         el.style.left = `${left}px`;
-        el.style.width = `${Math.floor(whiteWidth * 0.62)}px`;
+        el.style.width = `${whiteWidth * 0.62}px`;
       } else {
         const left = baseLeft + whiteIndex * whiteWidth;
         el.style.left = `${left}px`;
