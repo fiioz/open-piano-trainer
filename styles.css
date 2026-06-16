@@ -202,6 +202,12 @@ body {
   width: 100%;
 }
 
+#sf2Status {
+  opacity: 0.75;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
 .noteReadout {
   display: flex;
   gap: 10px;

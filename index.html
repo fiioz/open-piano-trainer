@@ -174,13 +174,21 @@
                   <div class="formRow">
                     <label class="label" for="waveform">音色</label>
                     <select id="waveform">
-                      <option value="piano" selected>piano</option>
+                      <option value="piano_cdn" selected>grand-piano (cdn)</option>
+                      <option value="sf2_local">sf2 (local)</option>
+                      <option value="piano_synth">piano (synth)</option>
                       <option value="triangle">triangle</option>
                       <option value="sine">sine</option>
                       <option value="sawtooth">sawtooth</option>
                       <option value="square">square</option>
                     </select>
                   </div>
+                  <div class="formRow">
+                    <label class="label" for="sf2File">SF2 文件</label>
+                    <input id="sf2File" type="file" accept=".sf2" />
+                    <button id="btnLoadLocalSf2" class="btn" type="button">加载本地 SF2</button>
+                  </div>
+                  <div class="mono" id="sf2Status">SF2: not loaded</div>
                   <div class="formRow">
                     <label class="label" for="masterGain">总音量</label>
                     <input id="masterGain" type="range" min="0" max="100" value="55" />

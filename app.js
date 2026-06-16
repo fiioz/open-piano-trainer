@@ -31,7 +31,7 @@ class AudioEngine {
   constructor() {
     this.ctx = null;
     this.master = null;
-    this.waveform = "piano";
+    this.waveform = "piano_cdn";
     this.masterGain = 0.55;
     this.releaseMs = 180;
     this.active = new Map();
@@ -40,6 +40,8 @@ class AudioEngine {
     this.convolver = null;
     this.compressor = null;
     this.noiseBuffer = null;
+    this.webAudioFont = { ready: false, promise: null, player: null, preset: null };
+    this.sf2 = { ready: false, promise: null, SoundFontCtor: null, engine: null, name: "" };
   }
 
   ensure() {
@@ -86,6 +88,37 @@ class AudioEngine {
 
   setWaveform(w) {
     this.waveform = w;
+    if (w === "piano_cdn") {
+      this._ensureWebAudioFont().catch((e) => console.error(e));
+    }
+  }
+
+  async loadSf2FromFile(file) {
+    this.ensure();
+    await this._ensureSf2Player();
+    const SoundFont = this.sf2.SoundFontCtor;
+    const engine = new SoundFont();
+    await engine.loadSoundFontFromFile(file);
+    if (engine.banks?.length) engine.bank = engine.banks[0].id;
+    if (engine.programs?.length) engine.program = engine.programs[0].id;
+    this.sf2.engine = engine;
+    this.sf2.ready = true;
+    this.sf2.name = file?.name || "local.sf2";
+    this.waveform = "sf2_local";
+  }
+
+  async loadSf2FromUrl(url) {
+    this.ensure();
+    await this._ensureSf2Player();
+    const SoundFont = this.sf2.SoundFontCtor;
+    const engine = new SoundFont();
+    await engine.loadSoundFontFromURL(url);
+    if (engine.banks?.length) engine.bank = engine.banks[0].id;
+    if (engine.programs?.length) engine.program = engine.programs[0].id;
+    this.sf2.engine = engine;
+    this.sf2.ready = true;
+    this.sf2.name = url;
+    this.waveform = "sf2_local";
   }
 
   setReleaseMs(ms) {
@@ -95,8 +128,24 @@ class AudioEngine {
   play(midi, velocity01 = 0.9) {
     this.ensure();
     if (this.active.has(midi)) return;
-    if (this.waveform === "piano") {
-      this._playPiano(midi, velocity01);
+    if (this.waveform === "sf2_local") {
+      if (!this.sf2.ready || !this.sf2.engine) return;
+      const vel127 = Math.round(clamp(velocity01, 0.05, 1) * 127);
+      this.sf2.engine.noteOn(midi, vel127);
+      this.active.set(midi, { kind: "sf2_local" });
+      return;
+    }
+    if (this.waveform === "piano_cdn") {
+      if (this.webAudioFont.ready) {
+        this._playWebAudioFontPiano(midi, velocity01);
+        return;
+      }
+      this._ensureWebAudioFont().catch((e) => console.error(e));
+      this._playPianoSynth(midi, velocity01);
+      return;
+    }
+    if (this.waveform === "piano_synth") {
+      this._playPianoSynth(midi, velocity01);
       return;
     }
     const now = this.ctx.currentTime;
@@ -138,7 +187,15 @@ class AudioEngine {
     const now = this.ctx.currentTime;
     const releaseSec = this.releaseMs / 1000;
 
-    if (node.kind === "piano") {
+    if (node.kind === "sf2_local") {
+      if (this.sf2.ready && this.sf2.engine) {
+        this.sf2.engine.noteOff(midi, 127);
+      }
+      this.active.delete(midi);
+      return;
+    }
+
+    if (node.kind === "piano_synth") {
       node.amp.gain.cancelScheduledValues(now);
       node.amp.gain.setValueAtTime(Math.max(node.amp.gain.value, 0.0001), now);
       node.amp.gain.exponentialRampToValueAtTime(0.0001, now + releaseSec);
@@ -147,6 +204,17 @@ class AudioEngine {
       for (const o of node.oscs) o.stop(stopAt);
       if (node.noise) node.noise.stop(now + 0.08);
 
+      this.active.delete(midi);
+      return;
+    }
+
+    if (node.kind === "piano_cdn") {
+      node.amp.gain.cancelScheduledValues(now);
+      node.amp.gain.setValueAtTime(Math.max(node.amp.gain.value, 0.0001), now);
+      node.amp.gain.exponentialRampToValueAtTime(0.0001, now + releaseSec);
+      try {
+        node.source.stop(now + releaseSec + 0.03);
+      } catch {}
       this.active.delete(midi);
       return;
     }
@@ -199,7 +267,7 @@ class AudioEngine {
     return g;
   }
 
-  _playPiano(midi, velocity01) {
+  _playPianoSynth(midi, velocity01) {
     const now = this.ctx.currentTime;
     const freq = midiToFreq(midi);
     const vel = clamp(velocity01, 0.05, 1);
@@ -270,7 +338,94 @@ class AudioEngine {
       noise.start(now);
     }
 
-    this.active.set(midi, { kind: "piano", oscs, amp, out, noise });
+    this.active.set(midi, { kind: "piano_synth", oscs, amp, out, noise });
+  }
+
+  _ensureWebAudioFont() {
+    if (this.webAudioFont.promise) return this.webAudioFont.promise;
+
+    const loadScriptOnce = (url) =>
+      new Promise((resolve, reject) => {
+        const key = `__loaded_${url}`;
+        if (window[key]) return resolve();
+        const existing = document.querySelector(`script[data-src="${url}"]`);
+        if (existing) {
+          existing.addEventListener("load", () => resolve(), { once: true });
+          existing.addEventListener("error", () => reject(new Error(`Load script failed: ${url}`)), { once: true });
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = url;
+        s.async = true;
+        s.dataset.src = url;
+        s.onload = () => {
+          window[key] = true;
+          resolve();
+        };
+        s.onerror = () => reject(new Error(`Load script failed: ${url}`));
+        document.head.appendChild(s);
+      });
+
+    this.webAudioFont.promise = (async () => {
+      const playerUrl = "https://surikov.github.io/webaudiofont/npm/dist/WebAudioFontPlayer.js";
+      const presetUrl = "https://surikov.github.io/webaudiofontdata/sound/0000_Aspirin_sf2_file.js";
+      const presetVarName = "_tone_0000_Aspirin_sf2_file";
+
+      await loadScriptOnce(playerUrl);
+      await loadScriptOnce(presetUrl);
+
+      const PlayerCtor = window.WebAudioFontPlayer;
+      if (!PlayerCtor) throw new Error("WebAudioFontPlayer not found");
+      const preset = window[presetVarName];
+      if (!preset) throw new Error("WebAudioFont preset not found");
+
+      const player = new PlayerCtor();
+      player.loader.decodeAfterLoading(this.ctx, preset);
+
+      this.webAudioFont.player = player;
+      this.webAudioFont.preset = preset;
+      this.webAudioFont.ready = true;
+    })();
+
+    return this.webAudioFont.promise;
+  }
+
+  _ensureSf2Player() {
+    if (this.sf2.promise) return this.sf2.promise;
+    this.sf2.promise = (async () => {
+      const mod = await import("https://cdn.jsdelivr.net/npm/sf2-player@0.0.7/+esm");
+      const SoundFont = mod?.default;
+      if (!SoundFont) throw new Error("sf2-player import failed");
+      this.sf2.SoundFontCtor = SoundFont;
+    })();
+    return this.sf2.promise;
+  }
+
+  _playWebAudioFontPiano(midi, velocity01) {
+    const player = this.webAudioFont.player;
+    const preset = this.webAudioFont.preset;
+    if (!player || !preset) {
+      this._playPianoSynth(midi, velocity01);
+      return;
+    }
+
+    const now = this.ctx.currentTime;
+    const vel = clamp(velocity01, 0.05, 1);
+
+    const out = this._makeStereoPan(midi);
+    out.connect(this.dry);
+    out.connect(this.wet);
+
+    const amp = this.ctx.createGain();
+    amp.gain.setValueAtTime(0.0001, now);
+    amp.gain.exponentialRampToValueAtTime(0.0001 + vel * 0.9, now + 0.006);
+    amp.connect(out);
+
+    const durationSec = 12;
+    const volume = 0.7;
+    const source = player.queueWaveTable(this.ctx, amp, preset, now, midi, durationSec, volume);
+
+    this.active.set(midi, { kind: "piano_cdn", amp, out, source });
   }
 
   click(velocity01 = 0.9) {
@@ -286,7 +441,12 @@ class AudioEngine {
     g.gain.exponentialRampToValueAtTime(0.0001, now + 0.035);
 
     osc.connect(g);
-    g.connect(this.master);
+    if (this.dry && this.wet) {
+      g.connect(this.dry);
+      g.connect(this.wet);
+    } else {
+      g.connect(this.master);
+    }
     osc.start(now);
     osc.stop(now + 0.05);
   }
@@ -1216,6 +1376,9 @@ const dom = {
   svgHint: document.getElementById("svgHint"),
 
   waveform: document.getElementById("waveform"),
+  sf2File: document.getElementById("sf2File"),
+  btnLoadLocalSf2: document.getElementById("btnLoadLocalSf2"),
+  sf2Status: document.getElementById("sf2Status"),
   masterGain: document.getElementById("masterGain"),
   masterGainValue: document.getElementById("masterGainValue"),
   releaseMs: document.getElementById("releaseMs"),
@@ -1420,6 +1583,33 @@ function attachControls() {
   dom.releaseMs.addEventListener("input", setReleaseUI);
   dom.tempo.addEventListener("input", setTempoUI);
   dom.btnMetronome.addEventListener("click", toggleMetronome);
+
+  dom.sf2File.addEventListener("change", async () => {
+    const file = dom.sf2File.files?.[0];
+    if (!file) return;
+    dom.sf2Status.textContent = "SF2: loading…";
+    try {
+      await audio.loadSf2FromFile(file);
+      dom.waveform.value = "sf2_local";
+      dom.sf2Status.textContent = `SF2: loaded (${audio.sf2.name})`;
+    } catch (e) {
+      dom.sf2Status.textContent = "SF2: load failed";
+      console.error(e);
+    }
+  });
+
+  dom.btnLoadLocalSf2.addEventListener("click", async () => {
+    dom.sf2Status.textContent = "SF2: loading…";
+    try {
+      const url = "/midiSound-2025-1-14.sf2";
+      await audio.loadSf2FromUrl(url);
+      dom.waveform.value = "sf2_local";
+      dom.sf2Status.textContent = "SF2: loaded (midiSound-2025-1-14.sf2)";
+    } catch (e) {
+      dom.sf2Status.textContent = "SF2: load failed";
+      console.error(e);
+    }
+  });
 
   dom.btnNewQuestion.addEventListener("click", () => {
     trainer.newQuestion();
@@ -1839,6 +2029,7 @@ function init() {
   setMasterGainUI();
   setReleaseUI();
   setTempoUI();
+  dom.sf2Status.textContent = "SF2: not loaded";
   pianoUi.build();
   rebuildKeyboardMapping();
   scrollPianoToMidi(60);
