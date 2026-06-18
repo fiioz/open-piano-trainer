@@ -781,6 +781,43 @@ function parseScoreJSON(text) {
   return { title: score.title ?? "Imported JSON", tempoBpm, events, endBeat };
 }
 
+function createBuiltinFurEliseMotifScore() {
+  const tempoBpm = 120;
+
+  const motifNotes = [
+    { midi: 76, dur: 0.25, vel: 0.95 },
+    { midi: 75, dur: 0.25, vel: 0.9 },
+    { midi: 76, dur: 0.25, vel: 0.95 },
+    { midi: 75, dur: 0.25, vel: 0.9 },
+    { midi: 76, dur: 0.25, vel: 0.95 },
+    { midi: 71, dur: 0.25, vel: 0.85 },
+    { midi: 74, dur: 0.25, vel: 0.85 },
+    { midi: 72, dur: 0.25, vel: 0.85 },
+    { midi: 69, dur: 0.5, vel: 0.95 },
+  ];
+
+  const events = [];
+  const repeats = 8;
+  const phraseBeats = 3;
+
+  for (let i = 0; i < repeats; i += 1) {
+    const base = i * phraseBeats;
+    events.push({ startBeat: base, durationBeats: 2.5, midis: [45, 52, 57], velocity01: 0.5 });
+    let t = base;
+    for (const n of motifNotes) {
+      events.push({ startBeat: t, durationBeats: n.dur, midis: [n.midi], velocity01: n.vel });
+      t += n.dur;
+    }
+  }
+
+  const endBeat = events.reduce((max, e) => Math.max(max, e.startBeat + e.durationBeats), 0);
+  return { title: "致爱丽丝（动机练习）", tempoBpm, events, endBeat };
+}
+
+const BUILTIN_SCORES = {
+  furEliseMotif: createBuiltinFurEliseMotifScore(),
+};
+
 function parseMusicXML(text) {
   const parser = new DOMParser();
   const xml = parser.parseFromString(text, "application/xml");
@@ -1355,6 +1392,7 @@ const dom = {
 
   scoreFile: document.getElementById("scoreFile"),
   scoreInfo: document.getElementById("scoreInfo"),
+  btnLoadFurElise: document.getElementById("btnLoadFurElise"),
   btnScorePlay: document.getElementById("btnScorePlay"),
   btnScorePause: document.getElementById("btnScorePause"),
   btnScoreStop: document.getElementById("btnScoreStop"),
@@ -1892,6 +1930,27 @@ function attachScorePlayer() {
   dom.btnOpenPdf.addEventListener("click", () => {
     if (!currentPdfUrl) return;
     window.open(currentPdfUrl, "_blank", "noopener,noreferrer");
+  });
+
+  dom.btnLoadFurElise?.addEventListener("click", () => {
+    try {
+      player.stop();
+      setPdfPreview("");
+      setSvgMode(false);
+      const score = BUILTIN_SCORES.furEliseMotif;
+      player.loadScore(score);
+      dom.scoreTempo.value = String(Math.round(player.tempoBpm));
+      dom.scoreTempoValue.textContent = String(Math.round(player.tempoBpm));
+      updateScoreInfoText(score);
+      dom.scoreProgress.value = "0";
+      dom.scoreTime.textContent = `${formatSeconds(0)} / ${formatSeconds(player.getTotalSeconds())}`;
+    } catch (e) {
+      player.loadScore(null);
+      dom.scoreInfo.textContent = "Load failed: built-in score";
+      setPdfPreview("");
+      setSvgMode(false);
+      console.error(e);
+    }
   });
 
   dom.scoreFile.addEventListener("change", async () => {
