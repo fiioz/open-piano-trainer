@@ -450,7 +450,9 @@ body {
 
 .piano {
   position: relative;
-  height: 220px;
+  --piano-height: 220px;
+  --black-height: 140px;
+  height: var(--piano-height);
   user-select: none;
   touch-action: manipulation;
 }
@@ -471,13 +473,14 @@ body {
 
 .key--white {
   background: linear-gradient(180deg, #ffffff, #e2e8f0);
-  height: 220px;
+  height: var(--piano-height);
   z-index: 1;
 }
 
 .key--black {
   background: linear-gradient(180deg, #0f172a, #111827);
-  height: 140px;
+  height: var(--black-height);
+  bottom: calc(var(--piano-height) - var(--black-height));
   z-index: 2;
   color: rgba(255, 255, 255, 0.9);
   border-color: rgba(255, 255, 255, 0.12);
